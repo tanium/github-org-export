@@ -4,6 +4,7 @@ import json
 import re
 import time
 import sys
+import ast
 
 try:
     GH_API_KEY = os.environ['GITHUB_TOKEN']
@@ -11,7 +12,7 @@ try:
 except:
     print "\nSet env vars 'GITHUB_TOKEN', 'GITHUB_ORG_NAME' and run again\n"
     quit()
-REPOS_PER_EXPORT = 100
+MAX_EXPORT_SIZE = 2097152
 LOCK_REPOSITORIES = 'false'
 HEADERS = {}
 USER_AGENT = { "User-Agent": "curl/7.47.0"}
@@ -50,8 +51,11 @@ def get_repo_info():
     Makes initial request to get headers, writes each paged json listing of repositories
     to CACHE_DIR.
     """
-    r = requests.get(url=REPOS_TARGET, headers=HEADERS)
-    pages = get_pages(r)
+    try:
+        r = requests.get(url=REPOS_TARGET, headers=HEADERS)
+        pages = get_pages(r)
+    except:
+        print "Couldn't request repo info. Can you reach %s in a browser?" % REPOS_TARGET
 
     for i in range(1, pages + 1):
         next_target = REPOS_TARGET + '?page=%s' % i
@@ -65,17 +69,23 @@ def repo_names():
     Reads previously created paged json listing of repos, extracts repository names,
     writes a new single file containing all repositories as ORG/reponame.
     """
+    repo_dict = {}
     j_files = os.listdir(CACHE_DIR)
     repo_names = open(R_NAME_FILE, 'w+')
     for file in j_files:
-        with open('%s%s' % (CACHE_DIR, file), 'r') as f:
-            j_data = json.loads(f.read())
-        for key in j_data:
-            if 'name' in key:
-                repo = '%s/%s' % (ORG_NAME, key['name'])
-                repo_names.write("%s\n" % repo)
+        if '.gitignore' not in file:
+            with open('%s%s' % (CACHE_DIR, file), 'r') as f:
+                j_data = json.loads(f.read())
+            for key in j_data:
+                if 'name' in key:
+                    repo = '%s/%s' % (ORG_NAME, key['name'])
+                    print repo
+                if 'size' in key:
+                    r_size = key['size']
+                repo_dict[repo] = r_size
+    repo_names.write(str(repo_dict))
     repo_names.close()
-    print 'Repo names in %s' % R_NAME_FILE
+    print 'Repo names and sizes in %s' % R_NAME_FILE
 
 def get_user_pages():
     """
@@ -92,82 +102,79 @@ def get_user_pages():
             f.write(json.dumps(j_user, indent=4, sort_keys=True))
 
 def do_users():
-    """
-    Pulls all users associated with the org. Not strictly needed for migration, but
-    a good bit of information to have post import on appliance in case you need
-    to check what a user previously had access to.
-    """
     u_files = os.listdir(UCACHE_DIR)
     user_names = open(U_NAME_FILE, 'w+')
     for file in u_files:
-        with open('%s%s' % (UCACHE_DIR, file), 'r') as f:
-            u_data = json.loads(f.read())
-        for key in u_data:
-            log_in = '%s\n' % key['login']
-            u_url = '%s\n' % key['html_url']
-            user_names.write(log_in)
-            user_names.write(u_url)
+        if '.gitignore' not in file:
+            with open('%s%s' % (UCACHE_DIR, file), 'r') as f:
+                u_data = json.loads(f.read())
+            for key in u_data:
+                log_in = '%s\n' % key['login']
+                u_url = '%s\n' % key['html_url']
+                user_names.write(log_in)
+                user_names.write(u_url)
     user_names.close()
     print "users in %s" % U_NAME_FILE
 
 def create_migration_bundles():
-    """
-    Builds a string from the repos pulled containing REPOS_PER_EXPORT number of
-    repositories. This turned out to be partly useless. We write out the json for each
-    paged response, which also contains the size of the repository. There's a limit on
-    the size of each export bundle, and 3.7G is really close to that maximum. Requesting
-    too many at once when size is not considered will return an error AFTER the migration
-    endpoint tries to build the bundle. For this to be useful, your total combined
-    repository size should be under 4G, which may mean massaging the repo_names file
-    with the help of professional services.
-    """
+    print "Creating repo groupings ~%sKB in size (laziest effort)..." % MAX_EXPORT_SIZE
     repo_list = []
 
     with open(R_NAME_FILE, 'r') as f:
         repo_list = f.read().splitlines()
-
+    repo_list = repo_list[0]
+    repo_list = repo_list.rstrip()
+    repo_list = ast.literal_eval(repo_list)
     # replace read repo_list for a shorter feedback loop while testing.
     #repo_list = ['ORG/santa_tracker', 'ORG/packer-openstack']
     x = 0
-    y = REPOS_PER_EXPORT
+    y = 9999
+    total = 0
+    #until the repo_list dict is empty (x)
     while x < len(repo_list):
         batch_list = []
-        if len(repo_list) >= y:
-            for i in range(x, y):
-                item = repo_list[0]
-                batch_list.append(item)
-                repo_list.remove(item)
-            print batch_list
-            migration_url = GH_URL + ORGS_MIGRATION_ENDPOINT
-            s_list = convert_list_str(batch_list, y)
-            migration_data = '{"lock_repositories":%s,"repositories":%s}' % (LOCK_REPOSITORIES, s_list)
-            print "\nRequesting export for %s repositories" % len(s_list)
-            r = requests.post(url=migration_url, headers=HEADERS, data=migration_data)
-            j_mig = json.loads(r.text)
-            mig_jig(j_mig, s_list)
-        else:
-            migration_url = GH_URL + ORGS_MIGRATION_ENDPOINT
-            s_list = convert_list_str(repo_list, y)
-            migration_data = '{"lock_repositories":%s,"repositories":%s}' % (LOCK_REPOSITORIES, s_list)
-            print "\nRequesting export for %s repositories" % len(s_list)
-            r = requests.post(url=migration_url, headers=HEADERS, data=migration_data)
-            j_mig = json.loads(r.text)
-            mig_jig(j_mig, s_list)
-            break
+        curr_size = 0
+        while curr_size < MAX_EXPORT_SIZE:
+            for key in repo_list.keys():
+                print len(batch_list)
+                rname = key
+                rsize = repo_list[key]
+                curr_size += rsize
+                batch_list.append(rname)
+                del repo_list[key]
+                if curr_size >= MAX_EXPORT_SIZE:
+                    break
+                if len(batch_list) == 100:
+                    break
+            if len(batch_list) == 100:
+                break
+            if len(repo_list) == 0:
+                #there's a better way to do this. probably.
+                break
+        migration_url = GH_URL + ORGS_MIGRATION_ENDPOINT
+        print "\nRequesting export for %s repositories in %s KB" % (len(batch_list), curr_size)
+        total += len(batch_list)
+        s_list = convert_list_str(batch_list, y)
+        print s_list
+        migration_data = '{"lock_repositories":%s,"repositories":%s}' % (LOCK_REPOSITORIES, s_list)
+        r = requests.post(url=migration_url, headers=HEADERS, data=migration_data)
+        j_mig = json.loads(r.text)
+        mig_jig(j_mig, s_list)
+    print '%s total repositories' % total
     
 def convert_list_str(repolist, max):
     """
     Post data is json format, but we stashed the repos by writing out lists. Convert
     single quotes to double quotes. Easy peasy.
     """
-    return str(repolist).replace("'", '"', max+max+max)
+    string = str(repolist).replace("'", '"', max*max)
+    string = str(string).replace(" u", " ", max*max)
+    string = str(string).replace("[u", "[", 1)
+    return string
 
 def mig_jig(j_mig, repos):
     '''Details hashed out in-line. sorry.'''
     try:
-        #write out url and guild from first json response. You CANNOT unlock repos later without
-        #the url returned during the migration request. Save them. guids returned by 
-        #migration endpoint turned out to be not useful.
         url = j_mig['url']
         guid = j_mig['guid']
     except:
@@ -175,7 +182,7 @@ def mig_jig(j_mig, repos):
         print "\nAPI didn't like that. This might be because you requested too many repos at once.\nHere's the output:"
         print j_mig
         quit()
-    #Per export, we create directories and files
+    #Per export, we create directories and files with interesting bits
     this_mig_dir = (MIG_OUT_DIR + '/' + guid)
     this_url_file = '%s/url' % this_mig_dir
     this_guid_file = '%s/guid' % this_mig_dir
@@ -268,12 +275,15 @@ if __name__ == '__main__':
         os.mkdir(CACHE_DIR)
     if len(os.listdir(CACHE_DIR)) == 0:
         get_repo_info()
+    if not os.path.exists(R_NAME_FILE):
         repo_names()
     if not os.path.exists(UCACHE_DIR):
         os.mkdir(UCACHE_DIR)
     if len(os.listdir(UCACHE_DIR)) == 0:
         get_user_pages()
-    do_users()
-    #create_migration_bundles()
+    if len(os.listdir(UCACHE_DIR)) == 0:
+         do_users()
+    
+    create_migration_bundles()
     print''
     
