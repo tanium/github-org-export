@@ -238,7 +238,6 @@ def wait_export_ready(url, guid):
             #Do what status == failed does here too. 
             exit()
         check_count += 1
-    
 
 def download_archive(url, guiddir):
     r = None
@@ -263,12 +262,8 @@ def download_archive(url, guiddir):
                 done = int(50 * dl / total_length)
                 sys.stdout.write( "\r[%s%s]  %s of %s bytes" % ('=' * done, ' ' * (50-done), dl, int(total_length) ) )
                 sys.stdout.flush()
-    
 
-def nemui():
-    time.sleep(30)
-
-if __name__ == '__main__':
+def do_staging():
     if not os.path.exists(MIG_OUT_DIR):
         os.mkdir(MIG_OUT_DIR)
     if not os.path.exists(CACHE_DIR):
@@ -283,7 +278,12 @@ if __name__ == '__main__':
         get_user_pages()
     if len(os.listdir(UCACHE_DIR)) == 0:
          do_users()
-    
+
+def nemui():
+    time.sleep(30)
+
+if __name__ == '__main__':
+    do_staging()
     create_migration_bundles()
     print''
     
