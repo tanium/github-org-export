@@ -29,3 +29,6 @@ With these variables reviewed, running the script is as easy as `python export_g
  7. At this point, we poll the migration url to check the stats every 30 seconds. Once the status comes back `exported`, we download the migration archive to the directory for that export (named after guid).
 
 When the script completes, you should have everything you need to begin importing. When you're comfortable and satisfied with your results, schedule your organization's outage, flip `LOCK_REPOSITORIES` to true, and run for production. With `LOCK_REPOSITORIES` set to true, all repos in the organization will be unavailable to pushes, pulls, clones, and viewing on Github.com.
+
+## License
+ See [LICENSE.txt](LICENSE.txt) for details.
