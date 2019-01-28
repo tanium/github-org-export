@@ -13,7 +13,7 @@ This script requires two environment variables:
 Additionally, there are adjustable variables at the beginning of the script. Of note, there are:
  - `EXPORT_SIZE`
    
-   This needs to be kept 'under 5G'. Keeping this at or under 2G was good for my runs. Repo sizes vary greatly. Our largest export was 2.8GB due to 
+   This needs to be kept 'under 5G'. Keeping this at or under 2G was good for my runs. Repo sizes vary greatly and this was a lazy (best?) effort to keep the export size in check.
  - `LOCK_REPOSITORIES`
    
    This is false out of the box because you're doing dry runs first right? RIGHT?
